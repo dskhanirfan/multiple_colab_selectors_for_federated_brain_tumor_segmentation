@@ -39,7 +39,7 @@ import pandas as pd
 #from collections import Counter
 import random
 import matplotlib.pyplot as plt
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 
 #import ctypes
 #libgcc_s = ctypes.CDLL('libgcc_s.so.1')
@@ -1117,6 +1117,142 @@ def custom_percentage_collaborator_selector_without_repetition(collaborators,
                 all_time_colab_list.append(selected_colabs_to_check.tolist())
                 #print(f"all_time_colab_list: {all_time_colab_list}")
                 return selected_colabs_to_check
+
+def tabu_search_collaborator_selector(collaborators,
+                                       db_iterator,
+                                       fl_round,
+                                       collaborators_chosen_each_round,
+                                       collaborator_times_per_round,
+                                       k=5,
+                                       max_iterations=100,
+                                       tabu_tenure=10):
+    """
+    Selects collaborators for the given round using Tabu Search.
+
+    Args:
+        collaborators (list): List of collaborator names.
+        db_iterator (iterator): Iterator over history of all tensors.
+            Columns: ['tensor_name', 'round', 'tags', 'nparray'].
+        fl_round (int): Current round number.
+        collaborators_chosen_each_round (dict): Dictionary of {round: list of collaborators}.
+        collaborator_times_per_round (dict): Dictionary of {round: {collaborator: total_time_taken_in_round}}.
+        k (int): Number of collaborators to select.
+        max_iterations (int): Maximum number of iterations for the search.
+        tabu_tenure (int): Number of iterations a solution remains in the tabu list.
+
+    Returns:
+        list: Selected collaborators for the current round.
+    """
+    print('tabu_search_collaborator_selector called')
+
+    # Step 1: Collect metrics
+    agg_dice_results = []
+    agg_loss_results = []
+
+    # Collect dice and loss results from the previous round
+    for record in db_iterator:
+        if record['round'] == fl_round - 1 and 'validate_agg' in record['tags'] and len(record['tags']) == 3:
+            if record['tensor_name'] == 'valid_dice':
+                agg_dice_results.append((record['tags'][0], record['nparray']))
+            elif record['tensor_name'] == 'valid_loss':
+                agg_loss_results.append((record['tags'][0], record['nparray']))
+
+    # Convert results to dictionaries
+    dice_scores = dict(agg_dice_results)
+    loss_scores = dict(agg_loss_results)
+
+    # Sum up times for each collaborator across all rounds
+    total_times = Counter()
+    for round_data in collaborator_times_per_round.values():
+        total_times.update(round_data)
+
+    # Collect all selections and count frequencies
+    all_selections = [col for values in collaborators_chosen_each_round.values() for col in values]
+    frequency_counter = Counter(all_selections)
+
+    # Prepare collaborator data
+    collaborator_data = {}
+    for collaborator in collaborators:
+        dice_score = float(dice_scores.get(collaborator, 0))
+        loss_score = float(loss_scores.get(collaborator, 0))
+        total_time = float(total_times.get(collaborator, 0))
+        frequency = float(frequency_counter.get(collaborator, 0))
+
+        collaborator_data[collaborator] = {
+            'dice': dice_score,
+            'loss': loss_score,
+            'time': total_time,
+            'frequency': frequency
+        }
+
+    # Normalize the attributes for all collaborators
+    def normalize_attribute(attr_name):
+        attr_values = [data[attr_name] for data in collaborator_data.values()]
+        max_value = max(attr_values) if attr_values else 1
+        for data in collaborator_data.values():
+            data[attr_name] = data[attr_name] / max_value if max_value else 0
+
+    normalize_attribute('dice')
+    normalize_attribute('loss')
+    normalize_attribute('time')
+    normalize_attribute('frequency')
+
+    # Step 2: Fitness Function
+    def fitness(solution):
+        """Compute fitness for a subset of collaborators."""
+        total_dice = sum(collaborator_data[col]['dice'] for col in solution)
+        total_loss = sum(collaborator_data[col]['loss'] for col in solution)
+        total_time = sum(collaborator_data[col]['time'] for col in solution)
+        total_frequency = sum(collaborator_data[col]['frequency'] for col in solution)
+        return (total_dice - total_loss) / (1 + total_time + total_frequency)
+
+    # Step 3: Initialize Tabu Search
+    num_collaborators = len(collaborators)
+    current_solution = random.sample(collaborators, k)  # Initial random solution
+    current_fitness = fitness(current_solution)
+    best_solution = current_solution
+    best_fitness = current_fitness
+
+    tabu_list = deque(maxlen=tabu_tenure)  # Tabu list to store recent solutions
+
+    # Step 4: Iterative Search
+    for iteration in range(max_iterations):
+        neighborhood = []
+
+        # Generate neighbors by swapping one collaborator
+        for i in range(k):
+            for j in range(num_collaborators):
+                if collaborators[j] not in current_solution:
+                    neighbor = current_solution[:]
+                    neighbor[i] = collaborators[j]
+                    neighborhood.append(neighbor)
+
+        # Evaluate neighbors and select the best one not in the tabu list
+        best_neighbor = None
+        best_neighbor_fitness = -float("inf")
+        for neighbor in neighborhood:
+            if neighbor not in tabu_list:
+                neighbor_fitness = fitness(neighbor)
+                if neighbor_fitness > best_neighbor_fitness:
+                    best_neighbor = neighbor
+                    best_neighbor_fitness = neighbor_fitness
+
+        # Update current solution
+        if best_neighbor:
+            current_solution = best_neighbor
+            current_fitness = best_neighbor_fitness
+            tabu_list.append(current_solution)
+
+        # Update global best solution if the current one is better
+        if current_fitness > best_fitness:
+            best_solution = current_solution
+            best_fitness = current_fitness
+
+        print(f"Iteration {iteration + 1}: Current Fitness = {current_fitness}, Best Fitness = {best_fitness}")
+
+    print("Selected Collaborators:", best_solution)
+    return best_solution
+
 
 #Particle Swarm Optimization (PSO) Collaborator Selector 
 #THIS METHOD SOMETIMES BREAKS SO I RUN IT AGAIN AND AGAIN :)
