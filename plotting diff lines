@@ -1,0 +1,75 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Load the data
+data_path = '../../Documents/Copy of dp-simagg.xlsx'
+data_excel = pd.ExcelFile(data_path)
+sheet = pd.read_excel(data_excel, sheet_name='Sheet1')
+
+# Define abbreviations for experiment names
+abbreviations = {
+    "DP_SimAgg_CPCS_p2_1e_output_FeTS2022_26949702": "DP-SimAgg ε=1",
+    "DP_SimAgg_CPCS_p2_10e_output_FeTS2022_26984807": "DP-SimAgg ε=10",
+    "SimAgg_CPCS_p2_output_FeTS2022_26985514": "SimAgg"
+}
+
+# Apply abbreviations
+sheet.rename(columns=abbreviations, inplace=True)
+
+# Convert 'Rounds' to integers for plotting
+sheet['Rounds'] = pd.to_numeric(sheet['Rounds'], errors='coerce').dropna().astype(int)
+
+# Filter for selected metrics
+selected_metrics = ['Simulation Time (minutes)', 'Projected Convergence Score', 'DICE Label 0', 'DICE Label 1', 'DICE Label 2', 'DICE Label 4']
+sheet = sheet[sheet['Metrics'].isin(selected_metrics)]
+
+# Melt the data for plotting
+melted = sheet.melt(id_vars=['Rounds', 'Metrics'], var_name='Experiment', value_name='Value')
+melted['Value'] = pd.to_numeric(melted['Value'], errors='coerce')
+
+# Define unique markers and line styles for each experiment
+style_dict = {
+    "DP-SimAgg ε=1": {'marker': 'o', 'linestyle': ':'},
+    "DP-SimAgg ε=10": {'marker': 's', 'linestyle': '--'},
+    "SimAgg": {'marker': '^', 'linestyle': '-.'}
+}
+
+# Define specific colors for each experiment
+color_dict = {
+    "DP-SimAgg ε=1": 'lightblue',
+    "DP-SimAgg ε=10": 'darkblue',
+    "SimAgg": 'black'
+}
+
+# Number of plots and layout setup
+num_metrics = len(selected_metrics)
+num_rows = (num_metrics + 1) // 2  # Calculate number of rows needed for two columns
+
+# Create line graphs in a two-column layout
+fig, axes = plt.subplots(num_rows, 2, figsize=(15, 5 * num_rows))
+axes = axes.flatten()  # Flatten the array of axes for easier indexing
+
+for i, metric in enumerate(selected_metrics):
+    ax = axes[i]
+    # Plot each experiment with its specific style and color
+    for experiment, group_data in melted[melted['Metrics'] == metric].groupby('Experiment'):
+        sns.lineplot(data=group_data, x='Rounds', y='Value', label=experiment,
+                     ax=ax, marker=style_dict[experiment]['marker'],
+                     linestyle=style_dict[experiment]['linestyle'],
+                     color=color_dict[experiment])  # Use the specific color
+    ax.set_title(f"{metric} across Rounds", fontsize=10)
+    ax.set_xlabel('Round', fontsize=8)
+    ax.set_ylabel('Value', fontsize=8)
+    ax.legend(title='Experiments', bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=6)
+
+# Hide the last subplot if the number of metrics is odd
+if num_metrics % 2 != 0:
+    axes[-1].axis('off')
+
+# Add the main title
+fig.suptitle('DP-SimAgg Metrics across FL rounds (FeTS Data)', fontsize=16, y=1.02)
+
+plt.tight_layout()
+plt.show()
+fig.savefig('DP-SimAgg Metrics across FL rounds FeTS Data.png')
